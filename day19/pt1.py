@@ -1,9 +1,22 @@
 #!/usr/bin/python3
 
+import time
 import sys
 import re
 import copy
 from pprint import pprint,pformat
+
+t0 = seconds = time.time()
+tn = t0
+
+def timecheck():
+    global tn
+    global t0
+    new_time = time.time()
+    r = int(new_time-tn)
+    a = int(new_time-t0)
+    tn=new_time
+    return f'section_t={r} since_start={a}'
 
 file = 'data'
 if( len(sys.argv) == 2  and sys.argv[1] == '-t'):
@@ -38,19 +51,23 @@ for line in lines:
             i = h.split(" ")
             costs[i[1]]=int(i[0])
         bp["rec"][res]=costs
+    bp["max_geode"]=23
+    bp["max_obsidian"]= bp["max_geode"]-1
+    s = bp["rec"]["geode"]["obsidian"]
+    i = 1
+    while( s>0 ):
+        s-=i
+        bp["max_obsidian"]-=1
+        i+=1
+    bp["max_clay"]= bp["max_obsidian"]-1
+    s = bp["rec"]["obsidian"]["clay"]
+    i = 1
+    while( s>0 ):
+        s-=i
+        bp["max_clay"]-=1
+        i+=1
     bps.append(bp)
 
-for bp in bps:
-    bp["max_ore"] = 0
-    # last day to build geode = 23
-    # last day to build obsidian = geode-bp[rec][geode][obsidian]-1
-    # last day to build clay = obsidian-bp[rec][obsidian][clay]-1A
-    bp["last_obsidian"] = 23 - bp["rec"]["geode"]["obsidian"]+1
-    bp["last_clay"] = bp["last_obsidian"] - bp["rec"]["obsidian"]["clay"]+1
-
-    for rec in bp["rec"][res]:
-        if bp["rec"][res]["ore"]>bp["max_ore"]:
-            bp["max_ore"]=bp["rec"][res]["ore"]
 pprint(bps)
 
 # {'number': '2',
@@ -61,121 +78,100 @@ pprint(bps)
 
 types= ["ore","clay","obsidian","geode" ]
 
-def can_build( state, bp, todo ):
-    #pprint(["CB",state,bp,todo])
-    if todo==4:
-        return [{"bots":{},"stock":state["stock"],"built":{"ore":False,"clay":False,"obsidian":False,"geode":False}}]
-    res = types[todo]
-    # work out how many of typ res we could buy given the stock
-    max_bot = 99999999
-    for cost_res in bp["rec"][res]:
-        v = int( state["stock"][cost_res]/bp["rec"][res][cost_res] )
-        if v < max_bot:
-            max_bot = v
-    #print(f'can afford {max_bot} of {res}')
-    opts = []
-    for res_buy in range(0,max_bot+1):
-        # every amount including zero and max
-        new_stock = dict(state["stock"])
-        for cost_res in bp["rec"][res]:
-            new_stock[cost_res] -= res_buy * bp["rec"][res][cost_res]
-            if( new_stock[cost_res] < 0 ):
-                print( "EEK")
-                pprint(state)
-                pprint(bp["rec"][res])
-                print(f' buying {res_buy} of {cost_res} at {bp["rec"][res][cost_res]}' )
-                print( new_stock )
-                exit()
-        cbopts = can_build( {"bots":state["bots"],"stock":new_stock},bp,todo+1)
-        for cbopt in cbopts:
-            cbopt["bots"][res]=res_buy+state["bots"][res]
-            if res_buy > 0:
-                cbopt["built"][res]=True
-            opts.append( cbopt )
-    return opts
 
 cache = {}
 hits = 0
 its = 0
+meho = 0
+mehc = 0
 
-def best_outcome( time, state, bp, indent="" ):
-    if time==24:
-        return state["stock"]["geode"]
-
-    # if ore income is more than max ore skip?
-    if state["bots"]["ore"]>2:
-        return 0
-#    if state["bots"]["clay"]>5:
-#        return 0
-
-    if state["bots"]["obsidian"]==0 and time>bp["last_obsidian"]:
-        #print( "OBS")
-        return 0
-    if state["bots"]["clay"]==0 and time>bp["last_clay"]:
-        #print( "CLAY")
-        return 0
+def best_outcome( time, state, bp, indent="", r=""):
+    global mehc
+    global meho
     global its
     global hits
     global cache
+    if time==25:
+        state["r"]=r
+        return state
+    if time>bp["max_obsidian"] and state["bots"]["obsidian"]==0:
+        #print("MEH OBSIDIAN")
+#        if meho % 10000 == 0:
+#            print( f"MEH OBSIDIAN : {meho}")
+#        meho+=1
+        return state
+    if time>bp["max_clay"] and state["bots"]["clay"]==0:
+        #print("MEH CLAY")
+#        mehc+=1
+#        if mehc % 10000 == 0:
+#            print( f"MEH CLAY : {mehc}")
+        return state
+
     code=f'{time},{state["bots"]["ore"]},{state["bots"]["clay"]},{state["bots"]["obsidian"]},{state["bots"]["geode"]},{state["stock"]["ore"]},{state["stock"]["clay"]},{state["stock"]["obsidian"]},{state["stock"]["geode"]}'
-    #print(indent+f' time={time} {code}')
+    its+=1
     if code in cache:
+        #hits+=1
+        #if hits%10000==0:
+            #print( f"CDING! {hits}/{its}={hits/its}" )
         return cache[code]
+    if time==7:
+        #print("YAY")
+        print(indent+f' time={time} {code} {timecheck()} cache={len(cache)} ')
     #pprint(state["stock"])
 
     # consider our options
+    options = ["NULL"]
+    can_geode=False
+    for res in types:
+        can_buy = True
+        for cost_res in bp["rec"][res]:
+            if state["stock"][cost_res]<bp["rec"][res][cost_res]:
+                can_buy = False
+                break
+        if can_buy:
+            options.append(res)
+            if res == 'geode':
+                can_geode=True
+    if can_geode:
+        options=["geode"]
 
-    # only consider "do nothing" if one type is not available
-    options = can_build( state, bp, 0 )
-    # review options and cull do nothing if we can build ANY bot
-
-    #must_build = True
-    #for res in types:
-        #build_this = False
-        #for option in options:
-            #if option["built"][res]:
-                #build_this = True
-                #break
-        #if not build_this:
-            #must_build = False
-            #break
-    #print("**** BUILD ALL")
-
-    #if state["stock"]["ore"]>=bp["max_ore"] and state["bots"]["clay"]==0:
-        #must_build = True
-
-
-    # collect resources only after starting to build bots
-
+    # collect resources
+    for res in state["bots"]:
+        state["stock"][res] += state["bots"][res]
 
     #pprint(options)
-    best = 0
-    for option in options:
-        #if must_build and option["built"]["clay"]==False and option["built"]["ore"]==False and option["built"]["obsidian"]==False and option["built"]["geode"]==False:
-                #print( "*** BUILDALL SKIP")
-                #continue
-        # update the new stock with the bots that existed at the start of the tick
-        for res in state["bots"]:
-            option["stock"][res] += state["bots"][res]
-        sub_best = best_outcome( time+1, option, bp, indent=indent+f"{len(options)}/" )
-        if sub_best>best:
+
+    best = None
+    for i in range(0,len(options)):
+        option=options[i]
+        new_state = {"bots":dict(state["bots"]),"stock":dict(state["stock"])}
+        if option != "NULL":
+            new_state["bots"][option]+=1
+            for cost_res in bp["rec"][option]:
+                new_state["stock"][cost_res] -= bp["rec"][option][cost_res]
+        st = new_state["stock"]
+        rc = f'{time} {option} {st["ore"]}o {st["clay"]}c {st["obsidian"]}ob {st["geode"]}g'
+        sub_best = best_outcome( time+1, new_state, bp, indent=indent+f"{i+1}/{len(options)}:", r=r+rc+"\n")
+        if best==None or sub_best["stock"]["geode"]>best["stock"]["geode"]:
             best=sub_best
     cache[code]=best
     return best
 
-
 answer = 0
 for bp in bps:
-    cache={}
+    cache = {}
     print(f'***** {bp["number"]} ******')
     zero_state = { "bots":{"clay":0,"geode":0,"obsidian":0,"ore":1},
                    "stock":{"clay":0,"geode":0,"obsidian":0,"ore":0} }
 #    zero_state = { "bots":{"clay":0,"geode":0,"obsidian":0,"ore":1},
 #                   "stock":{"clay":10,"geode":0,"obsidian":0,"ore":10} }
-    best = best_outcome( 0, zero_state, bp)
-    print(best)
-    quality = best * bp["number"]
-    answer += quality
+    pprint(bp)
+    best = best_outcome( 1, zero_state, bp)
+    answer += best["stock"]["geode"] * bp["number"]
+    pprint(best)
+
+                  
+
 
 
 print( f'PART 1 = {answer}' )
